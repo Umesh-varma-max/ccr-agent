@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: ccr-compliance-agent
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_CHAT_MODEL
+        value: llama-3.1-8b-instant
+      - key: LOCAL_EMBEDDING_MODEL
+        value: all-MiniLM-L6-v2
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: QDRANT_COLLECTION
+        value: ccr_sections

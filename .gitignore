@@ -1,0 +1,27 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Environment
+.env
+
+# Data artifacts (large/generated)
+data/
+*.log
+
+# Frontend build
+frontend/dist/
+frontend/node_modules/
+frontend/tsconfig.app.tsbuildinfo
+
+# Generated reports
+CCR_Project_Report.html
+CCR_Project_Report.pdf
+
+# IDE
+.vscode/
+.idea/
+*.swp
