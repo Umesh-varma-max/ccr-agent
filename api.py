@@ -80,8 +80,13 @@ def _current_health_snapshot() -> HealthResponse:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.retriever = None
+    app.state.retriever_error = None
     app.state.health_snapshot = None
     app.state.health_snapshot_at = 0.0
+    try:
+        app.state.retriever = get_shared_retriever()
+    except Exception as exc:
+        app.state.retriever_error = str(exc)
     yield
 
 
@@ -131,8 +136,13 @@ def ask_detailed(request: AskRequest) -> AskDetailedResponse:
     try:
         retriever = app.state.retriever
         if retriever is None:
-            retriever = get_shared_retriever()
-            app.state.retriever = retriever
+            try:
+                retriever = get_shared_retriever()
+                app.state.retriever = retriever
+                app.state.retriever_error = None
+            except Exception as exc:
+                app.state.retriever_error = str(exc)
+                raise HTTPException(status_code=503, detail=f"Retriever initialization failed: {exc}") from exc
         response = build_agent_response(request.question, top_k=request.top_k, retriever=retriever)
         return AskDetailedResponse(
             answer=response["answer"],
