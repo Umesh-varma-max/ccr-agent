@@ -31,6 +31,12 @@ FOLLOW_UP_HINTS = {
     "theater": "Is this a movie theater, live performance venue, or temporary event space, and what is the occupancy?",
 }
 
+QUERY_EXPANSION_TERMS = {
+    "restaurant": {"food", "meal", "meals", "eating", "kitchen", "sanitation", "sanitary", "foodhandler", "foodhandlers"},
+    "farm": {"agriculture", "agricultural", "pesticide", "pesticides", "crop", "crops", "livestock", "housing", "processing"},
+    "theater": {"theater", "theatre", "venue", "occupancy", "assembly", "audience", "performance", "egress", "exit"},
+}
+
 STOP_TERMS = {
     "what",
     "which",
@@ -80,11 +86,16 @@ def normalize_space(text: str) -> str:
 
 
 def extract_query_terms(question: str) -> set[str]:
-    return {
+    terms = {
         token
         for token in re.findall(r"[a-z0-9]+", question.lower())
         if len(token) > 3 and token not in STOP_TERMS
     }
+    lowered = question.lower()
+    for keyword, expansions in QUERY_EXPANSION_TERMS.items():
+        if keyword in lowered:
+            terms.update(expansions)
+    return terms
 
 
 def hit_overlap_terms(question: str, hit: dict[str, Any]) -> list[str]:
@@ -97,6 +108,19 @@ def hit_overlap_terms(question: str, hit: dict[str, Any]) -> list[str]:
         ]
     ).lower()
     return [term for term in sorted(extract_query_terms(question)) if term in haystack]
+
+
+def prioritize_hits(question: str, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    scored: list[tuple[int, float, dict[str, Any]]] = []
+    for hit in hits:
+        overlap = hit_overlap_terms(question, hit)
+        distance = float(hit.get("distance") or 0.0)
+        scored.append((len(overlap), distance, hit))
+
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    prioritized = [hit for _, _, hit in scored]
+    overlapping_hits = [hit for hit in prioritized if hit_overlap_terms(question, hit)]
+    return overlapping_hits or prioritized
 
 
 def explain_hit_relevance(question: str, hit: dict[str, Any]) -> str:
@@ -283,6 +307,7 @@ def build_agent_response(question: str, top_k: int = 5, retriever: CCRRetriever 
     title_filter = infer_title_filter(question)
     active_retriever = retriever or get_shared_retriever()
     hits = dedupe_hits(active_retriever.search(question, top_k=top_k, title_number=title_filter))
+    hits = prioritize_hits(question, hits)
     used_llm = False
 
     if os.getenv("GROQ_API_KEY"):
