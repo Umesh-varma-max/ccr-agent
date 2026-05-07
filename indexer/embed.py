@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from functools import lru_cache
 from typing import Iterable
 
 try:
@@ -51,11 +52,16 @@ class HashEmbeddingProvider(EmbeddingProvider):
         return [value / norm for value in buckets]
 
 
-def get_embedding_provider() -> EmbeddingProvider:
+@lru_cache(maxsize=2)
+def _get_cached_embedding_provider(model: str) -> EmbeddingProvider:
     try:
-        return SentenceTransformerProvider()
+        return SentenceTransformerProvider(model)
     except Exception:
         return HashEmbeddingProvider()
+
+
+def get_embedding_provider(model: str = LOCAL_EMBEDDING_MODEL) -> EmbeddingProvider:
+    return _get_cached_embedding_provider(model)
 
 
 def batched(items: list, batch_size: int) -> Iterable[list]:

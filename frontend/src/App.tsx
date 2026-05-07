@@ -83,6 +83,9 @@ export default function App() {
 
   const helperText = useMemo(() => {
     if (health) {
+      if (health.status !== "ok") {
+        return "The indexed CCR dataset is not available right now.";
+      }
       return `${health.indexed_records.toLocaleString()} indexed records available in the current CCR dataset.`;
     }
     return healthError || "Connecting to the indexed CCR dataset...";

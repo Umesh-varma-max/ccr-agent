@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -56,3 +57,8 @@ class CCRRetriever:
             document = entity.pop("text", "")
             hits.append({"document": document, "metadata": entity, "distance": item.get("distance")})
         return hits
+
+
+@lru_cache(maxsize=1)
+def get_shared_retriever() -> CCRRetriever:
+    return CCRRetriever()

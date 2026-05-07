@@ -163,6 +163,8 @@ Expected: retrieves agricultural, pesticide, worker safety, and environmental se
 
 Hosted setup: Render/Railway/Fly.io for the API, Qdrant Cloud for vectors, Groq for LLM.
 
+If you are serving the React UI from `api.py` on Render, rebuild `frontend/dist` before pushing UI changes. The current Render Python service installs Python dependencies only; it does not rebuild the frontend during deploy.
+
 Set these environment variables in your hosting dashboard:
 
 ```env

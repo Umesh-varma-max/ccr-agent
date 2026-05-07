@@ -19,10 +19,10 @@ if __package__ is None or __package__ == "":
 
 try:
     from agent.prompts import DISCLAIMER, SYSTEM_PROMPT
-    from agent.retriever import CCRRetriever
+    from agent.retriever import CCRRetriever, get_shared_retriever
 except ModuleNotFoundError:
     from prompts import DISCLAIMER, SYSTEM_PROMPT
-    from retriever import CCRRetriever
+    from retriever import CCRRetriever, get_shared_retriever
 
 
 FOLLOW_UP_HINTS = {
@@ -278,11 +278,11 @@ def answer_extractively(question: str, hits: list[dict[str, Any]], follow_up: st
     )
 
 
-def build_agent_response(question: str, top_k: int = 5) -> dict[str, Any]:
+def build_agent_response(question: str, top_k: int = 5, retriever: CCRRetriever | None = None) -> dict[str, Any]:
     follow_up = needs_follow_up(question)
     title_filter = infer_title_filter(question)
-    retriever = CCRRetriever()
-    hits = dedupe_hits(retriever.search(question, top_k=top_k, title_number=title_filter))
+    active_retriever = retriever or get_shared_retriever()
+    hits = dedupe_hits(active_retriever.search(question, top_k=top_k, title_number=title_filter))
     used_llm = False
 
     if os.getenv("GROQ_API_KEY"):
