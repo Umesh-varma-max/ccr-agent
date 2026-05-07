@@ -32,12 +32,18 @@ def chunk_markdown(text: str, max_words: int = 500, overlap: int = 80) -> list[s
 
 def load_sections(path: Path) -> list[dict]:
     rows: list[dict] = []
+    skipped = 0
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
             if line.strip():
-                row = json.loads(line)
-                validate_section(row)
-                rows.append(row)
+                try:
+                    row = json.loads(line)
+                    validate_section(row)
+                    rows.append(row)
+                except Exception:
+                    skipped += 1
+    if skipped:
+        print(f"Skipped {skipped} invalid extracted sections from {path}")
     return rows
 
 
@@ -62,7 +68,10 @@ def upsert(input_path: Path, db_path: Path, collection_name: str = QDRANT_COLLEC
 
         if not records:
             client.ensure_collection(collection_name, 384)
-            print(f"No sections found in {input_path}; Qdrant collection is ready at {get_qdrant_uri(db_path)}")
+            print(
+                f"No sections found in {input_path}; Qdrant collection is ready at {get_qdrant_uri(db_path)} "
+                f"using embedding provider '{getattr(embedder, 'provider_name', 'unknown')}'."
+            )
             return 0
 
         indexed = 0
@@ -75,7 +84,10 @@ def upsert(input_path: Path, db_path: Path, collection_name: str = QDRANT_COLLEC
             client.upsert(collection_name=collection_name, data=payload)
             indexed += len(payload)
         client.flush(collection_name)
-        print(f"Indexed {indexed} chunks from {len(sections)} sections into Qdrant at {get_qdrant_uri(db_path)}")
+        print(
+            f"Indexed {indexed} chunks from {len(sections)} sections into Qdrant at {get_qdrant_uri(db_path)} "
+            f"using embedding provider '{getattr(embedder, 'provider_name', 'unknown')}'."
+        )
         return indexed
     finally:
         client.close()

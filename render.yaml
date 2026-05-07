@@ -3,9 +3,15 @@ services:
     name: ccr-compliance-agent
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && python -c "from fastembed import TextEmbedding; list(TextEmbedding(model_name='sentence-transformers/all-MiniLM-L6-v2').embed(['warmup']))"
     startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: EMBEDDING_PROVIDER
+        value: fastembed
+      - key: ALLOW_HASH_EMBEDDINGS
+        value: false
+      - key: FASTEMBED_MODEL
+        value: sentence-transformers/all-MiniLM-L6-v2
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_CHAT_MODEL

@@ -19,12 +19,29 @@ SECTION_RE = re.compile(r"[§Â]+§*\s*([\w.\-]+)\.?\s*(.*)")
 TITLE_RE = re.compile(r"Title\s+(\d{1,2})\s*[-–: ]\s*([^\n|]+)", re.I)
 
 
+NON_CCR_MARKERS = (
+    "/@vite/client",
+    "data-vite-dev-id",
+    "CalReg Compass",
+    "CCR Compliance Agent",
+    "Supporting CCR links",
+    "indexed records available in the current CCR dataset",
+    "This section appears relevant based on its heading:",
+    "Use this section as a practical checklist, focusing on:",
+)
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 def compact(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
+
+
+def is_obviously_non_ccr_html(html: str, title_text: str = "") -> bool:
+    haystack = f"{title_text}\n{html}".lower()
+    return any(marker.lower() in haystack for marker in NON_CCR_MARKERS)
 
 
 def infer_title(text: str, url: str = "") -> tuple[int | None, str | None]:
@@ -176,10 +193,15 @@ def extract_westlaw_section(soup: BeautifulSoup, source_url: str, retrieved_at: 
 
 def extract_section(html: str, source_url: str, retrieved_at: str | None = None) -> dict:
     soup = BeautifulSoup(html, "lxml")
+    title_text = compact(soup.title.get_text(" ", strip=True)) if soup.title else ""
+    if is_obviously_non_ccr_html(html, title_text):
+        raise ValueError("non-CCR HTML captured instead of a regulation page")
+
     westlaw_section = extract_westlaw_section(soup, source_url, retrieved_at)
     if westlaw_section:
         return westlaw_section
-    title_text = compact(soup.title.get_text(" ", strip=True)) if soup.title else ""
+    if "govt.westlaw.com/calregs/document/" in source_url.lower() and "california code of regulations" not in title_text.lower():
+        raise ValueError("unexpected document HTML: missing CCR page title")
     container = find_main_container(soup)
     lines = element_to_lines(container)
     joined = "\n".join(lines)

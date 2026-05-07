@@ -29,6 +29,9 @@ copy .env.example .env
 
 Environment variables:
 
+- `EMBEDDING_PROVIDER`: `auto` (default), `fastembed`, `local`, or `hash`
+- `ALLOW_HASH_EMBEDDINGS`: defaults to `true`; set to `false` in deployment so bad fallback vectors do not silently degrade retrieval quality
+- `FASTEMBED_MODEL`: defaults to `sentence-transformers/all-MiniLM-L6-v2`
 - `GROQ_API_KEY`: create at `https://console.groq.com/keys`
 - `GROQ_CHAT_MODEL`: defaults to `llama-3.1-8b-instant`
 - `LOCAL_EMBEDDING_MODEL`: defaults to `all-MiniLM-L6-v2`
@@ -42,7 +45,14 @@ Environment variables:
 
 Vector database: Qdrant. For deployment, use Qdrant Cloud with `QDRANT_URL` and `QDRANT_API_KEY`. For local-only development, the default local path is under `%LOCALAPPDATA%\ccr-agent-qdrant\ccr_qdrant`.
 
-Embeddings: `sentence-transformers/all-MiniLM-L6-v2` for local embeddings, with a deterministic hash fallback for offline tests.
+Embeddings:
+
+- `fastembed`: uses ONNX-based local embeddings with much lower memory than sentence-transformers, and is the recommended free deployment option
+- `local`: loads `sentence-transformers/all-MiniLM-L6-v2` in process
+- `hash`: deterministic fallback for offline tests only
+- `auto`: tries FastEmbed, then local sentence-transformers, then hash (if `ALLOW_HASH_EMBEDDINGS=true`)
+
+Important: index and query with the same embedding mode in production. If Render uses `EMBEDDING_PROVIDER=fastembed`, re-run indexing with `EMBEDDING_PROVIDER=fastembed` as well before trusting deployed answers.
 
 LLM: Groq chat completions when `GROQ_API_KEY` is present; extractive snippet answers otherwise.
 
@@ -168,6 +178,9 @@ If you are serving the React UI from `api.py` on Render, rebuild `frontend/dist`
 Set these environment variables in your hosting dashboard:
 
 ```env
+EMBEDDING_PROVIDER=fastembed
+ALLOW_HASH_EMBEDDINGS=false
+FASTEMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2
 GROQ_API_KEY=your_groq_key
 GROQ_CHAT_MODEL=llama-3.1-8b-instant
 LOCAL_EMBEDDING_MODEL=all-MiniLM-L6-v2
@@ -180,6 +193,9 @@ PORT=8000
 Before deploying, index data into the hosted Qdrant collection:
 
 ```bash
+set EMBEDDING_PROVIDER=fastembed
+set ALLOW_HASH_EMBEDDINGS=false
+set FASTEMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2
 python crawler/discover.py --output data/urls/discovered_urls.jsonl
 python crawler/fetch.py --input data/urls/discovered_urls.jsonl --output data/raw/
 python crawler/extract.py --input data/raw/pages_raw.jsonl --output data/raw/sections.jsonl

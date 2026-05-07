@@ -13,8 +13,11 @@ try:
 except ModuleNotFoundError:
     pass
 
+
 LOCAL_EMBEDDING_MODEL = os.getenv("LOCAL_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-HF_API_URL = f"https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/{LOCAL_EMBEDDING_MODEL}"
+FASTEMBED_MODEL = os.getenv("FASTEMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "auto").strip().lower()
+ALLOW_HASH_EMBEDDINGS = os.getenv("ALLOW_HASH_EMBEDDINGS", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _normalize(vec: list[float]) -> list[float]:
@@ -23,6 +26,8 @@ def _normalize(vec: list[float]) -> list[float]:
 
 
 class EmbeddingProvider:
+    provider_name = "unknown"
+
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         raise NotImplementedError
 
@@ -30,29 +35,23 @@ class EmbeddingProvider:
         return self.embed_documents([text])[0]
 
 
-class HuggingFaceAPIProvider(EmbeddingProvider):
-    """Uses HuggingFace free Inference API — zero RAM, compatible embeddings."""
+class FastEmbedProvider(EmbeddingProvider):
+    provider_name = "fastembed"
 
-    def __init__(self):
-        import requests
-        self._session = requests.Session()
-        token = os.getenv("HF_API_TOKEN", "")
-        if token:
-            self._session.headers["Authorization"] = f"Bearer {token}"
+    def __init__(self, model_name: str = FASTEMBED_MODEL):
+        from fastembed import TextEmbedding
+
+        self.model_name = model_name
+        self.model = TextEmbedding(model_name=model_name)
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        resp = self._session.post(
-            HF_API_URL,
-            json={"inputs": texts, "options": {"wait_for_model": True}},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        embeddings = resp.json()
-        # Normalize to match sentence-transformers normalize_embeddings=True
-        return [_normalize(emb) for emb in embeddings]
+        vectors = list(self.model.embed(texts))
+        return [_normalize(vector.tolist() if hasattr(vector, "tolist") else list(vector)) for vector in vectors]
 
 
 class SentenceTransformerProvider(EmbeddingProvider):
+    provider_name = "local"
+
     def __init__(self, model: str = LOCAL_EMBEDDING_MODEL):
         from sentence_transformers import SentenceTransformer
 
@@ -63,7 +62,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
 
 
 class HashEmbeddingProvider(EmbeddingProvider):
-    """Deterministic offline fallback for tests and demos without API keys."""
+    provider_name = "hash"
 
     def __init__(self, dimensions: int = 384):
         self.dimensions = dimensions
@@ -81,26 +80,69 @@ class HashEmbeddingProvider(EmbeddingProvider):
         return [value / norm for value in buckets]
 
 
-@lru_cache(maxsize=2)
-def _get_cached_embedding_provider(model: str) -> EmbeddingProvider:
-    # 1. Try local sentence-transformers (best quality, needs RAM)
+def _provider_error(provider_label: str, exc: Exception) -> RuntimeError:
+    error = RuntimeError(f"Embedding provider '{provider_label}' failed: {exc}")
+    error.__cause__ = exc
+    return error
+
+
+def _build_fastembed_provider() -> EmbeddingProvider:
+    try:
+        provider = FastEmbedProvider()
+        provider.embed_query("embedding readiness check")
+        return provider
+    except Exception as exc:
+        raise _provider_error("fastembed", exc)
+
+
+def _build_local_provider(model: str) -> EmbeddingProvider:
     try:
         return SentenceTransformerProvider(model)
-    except Exception:
-        pass
-    # 2. Try HuggingFace API (free, low RAM)
-    try:
-        provider = HuggingFaceAPIProvider()
-        provider.embed_query("test")
-        return provider
-    except Exception:
-        pass
-    # 3. Hash fallback
+    except Exception as exc:
+        raise _provider_error("local", exc)
+
+
+def _build_hash_provider() -> EmbeddingProvider:
     return HashEmbeddingProvider()
 
 
+@lru_cache(maxsize=4)
+def _get_cached_embedding_provider(model: str, provider_name: str, allow_hash: bool, fastembed_model: str) -> EmbeddingProvider:
+    if provider_name == "fastembed":
+        return _build_fastembed_provider()
+    if provider_name == "local":
+        return _build_local_provider(model)
+    if provider_name == "hash":
+        return _build_hash_provider()
+    if provider_name != "auto":
+        raise RuntimeError(
+            f"Unknown EMBEDDING_PROVIDER '{provider_name}'. Expected one of: auto, fastembed, local, hash."
+        )
+
+    fastembed_error: Exception | None = None
+    local_error: Exception | None = None
+
+    try:
+        return _build_fastembed_provider()
+    except Exception as exc:
+        fastembed_error = exc
+
+    try:
+        return _build_local_provider(model)
+    except Exception as exc:
+        local_error = exc
+
+    if allow_hash:
+        return _build_hash_provider()
+
+    raise RuntimeError(
+        "No usable embedding provider is available. "
+        f"FastEmbed error: {fastembed_error}; local provider error: {local_error}."
+    )
+
+
 def get_embedding_provider(model: str = LOCAL_EMBEDDING_MODEL) -> EmbeddingProvider:
-    return _get_cached_embedding_provider(model)
+    return _get_cached_embedding_provider(model, EMBEDDING_PROVIDER, ALLOW_HASH_EMBEDDINGS, FASTEMBED_MODEL)
 
 
 def batched(items: list, batch_size: int) -> Iterable[list]:

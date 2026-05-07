@@ -8,6 +8,26 @@ from crawler.config import QDRANT_COLLECTION, QDRANT_LOCAL_PATH
 from indexer.embed import get_embedding_provider
 from qdrant_utils import connect_qdrant
 
+NON_CCR_HIT_MARKERS = (
+    "CalReg Compass",
+    "CCR Compliance Agent",
+    "Supporting CCR links",
+    "indexed records available in the current CCR dataset",
+    "This section appears relevant based on its heading:",
+    "Use this section as a practical checklist, focusing on:",
+)
+
+
+def _is_suspicious_hit(document: str, metadata: dict[str, Any]) -> bool:
+    combined = "\n".join(
+        [
+            document or "",
+            str(metadata.get("section_heading") or ""),
+            str(metadata.get("title_name") or ""),
+        ]
+    ).lower()
+    return any(marker.lower() in combined for marker in NON_CCR_HIT_MARKERS)
+
 
 class CCRRetriever:
     def __init__(self, db_path: Path = QDRANT_LOCAL_PATH, collection_name: str = QDRANT_COLLECTION):
@@ -55,6 +75,8 @@ class CCRRetriever:
         for item in results[0] if results else []:
             entity = item.get("entity", {})
             document = entity.pop("text", "")
+            if _is_suspicious_hit(document, entity):
+                continue
             hits.append({"document": document, "metadata": entity, "distance": item.get("distance")})
         return hits
 
