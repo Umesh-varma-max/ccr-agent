@@ -13,6 +13,7 @@ except ModuleNotFoundError:
     pass
 
 LOCAL_EMBEDDING_MODEL = os.getenv("LOCAL_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+HF_API_URL = f"https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/{LOCAL_EMBEDDING_MODEL}"
 
 
 class EmbeddingProvider:
@@ -21,6 +22,22 @@ class EmbeddingProvider:
 
     def embed_query(self, text: str) -> list[float]:
         return self.embed_documents([text])[0]
+
+
+class HuggingFaceAPIProvider(EmbeddingProvider):
+    """Uses HuggingFace free Inference API — zero RAM, compatible embeddings."""
+
+    def __init__(self):
+        import requests
+        self._session = requests.Session()
+        token = os.getenv("HF_API_TOKEN", "")
+        if token:
+            self._session.headers["Authorization"] = f"Bearer {token}"
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        resp = self._session.post(HF_API_URL, json={"inputs": texts, "options": {"wait_for_model": True}})
+        resp.raise_for_status()
+        return resp.json()
 
 
 class SentenceTransformerProvider(EmbeddingProvider):
@@ -54,10 +71,20 @@ class HashEmbeddingProvider(EmbeddingProvider):
 
 @lru_cache(maxsize=2)
 def _get_cached_embedding_provider(model: str) -> EmbeddingProvider:
+    # 1. Try HuggingFace API (free, low RAM)
+    try:
+        provider = HuggingFaceAPIProvider()
+        provider.embed_query("test")
+        return provider
+    except Exception:
+        pass
+    # 2. Try local sentence-transformers
     try:
         return SentenceTransformerProvider(model)
     except Exception:
-        return HashEmbeddingProvider()
+        pass
+    # 3. Hash fallback
+    return HashEmbeddingProvider()
 
 
 def get_embedding_provider(model: str = LOCAL_EMBEDDING_MODEL) -> EmbeddingProvider:

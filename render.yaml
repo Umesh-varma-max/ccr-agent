@@ -3,15 +3,13 @@ services:
     name: ccr-compliance-agent
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt && python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_CHAT_MODEL
         value: llama-3.1-8b-instant
-      - key: HF_HOME
-        value: /opt/render/project/.cache/huggingface
       - key: LOCAL_EMBEDDING_MODEL
         value: all-MiniLM-L6-v2
       - key: QDRANT_URL
@@ -20,5 +18,3 @@ services:
         sync: false
       - key: QDRANT_COLLECTION
         value: ccr_sections
-      - key: SENTENCE_TRANSFORMERS_HOME
-        value: /opt/render/project/.cache/huggingface
