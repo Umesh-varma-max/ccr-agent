@@ -40,6 +40,43 @@ const EXAMPLES = [
   "What laws apply to farms or agricultural facilities?"
 ];
 
+function renderAnswer(answer: string) {
+  const paragraphs = answer.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
+  const intro: string[] = [];
+  const numbered: string[] = [];
+  const outro: string[] = [];
+
+  for (const part of paragraphs) {
+    if (/^\d+\.\s/.test(part)) {
+      numbered.push(part.replace(/^\d+\.\s*/, ""));
+      continue;
+    }
+    if (numbered.length === 0) {
+      intro.push(part);
+    } else {
+      outro.push(part);
+    }
+  }
+
+  return (
+    <div className="answer-copy">
+      {intro.map((part, index) => (
+        <p key={`intro-${index}`}>{part}</p>
+      ))}
+      {numbered.length ? (
+        <ol className="answer-list">
+          {numbered.map((item, index) => (
+            <li key={`item-${index}`}>{item}</li>
+          ))}
+        </ol>
+      ) : null}
+      {outro.map((part, index) => (
+        <p key={`outro-${index}`}>{part}</p>
+      ))}
+    </div>
+  );
+}
+
 function LogoMark() {
   return (
     <div className="logo-mark" aria-hidden="true">
@@ -178,13 +215,13 @@ export default function App() {
             ) : null}
 
             <section className="answer-card">
-              <h2>Answer</h2>
-              <pre>{response.answer}</pre>
+              <h2>Compliance Advice</h2>
+              {renderAnswer(response.answer)}
             </section>
 
             <section className="sources-card">
               <div className="sources-header">
-                <h2>Supporting CCR links</h2>
+                <h2>Referenced CCR Sections (Context)</h2>
                 <span>{response.retrieved_sections} linked</span>
               </div>
               <details className="sources-dropdown">

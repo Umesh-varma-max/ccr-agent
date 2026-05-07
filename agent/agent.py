@@ -81,6 +81,22 @@ def build_context(hits: list[dict[str, Any]]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
+def build_llm_briefs(question: str, hits: list[dict[str, Any]]) -> str:
+    blocks = []
+    for idx, hit in enumerate(hits[:4], start=1):
+        meta = hit["metadata"]
+        overlap = ", ".join(hit_overlap_terms(question, hit)[:4]) or "closest CCR match from the indexed dataset"
+        key_points = extract_key_points(hit.get("document", ""), limit=2)
+        key_points_text = " | ".join(key_points) if key_points else summarize_hit(hit, length=180)
+        blocks.append(
+            f"{idx}. Citation: {meta.get('citation')}\n"
+            f"Heading: {meta.get('section_heading')}\n"
+            f"Why it may apply: {overlap}\n"
+            f"Plain-English details: {key_points_text}"
+        )
+    return "\n\n".join(blocks)
+
+
 def normalize_space(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
@@ -256,20 +272,29 @@ def answer_with_llm(question: str, hits: list[dict[str, Any]], follow_up: str | 
     from groq import Groq
 
     client = Groq()
-    context = build_context(hits)
+    context = build_llm_briefs(question, hits)
     user_message = (
-        f"Question: {question}\n\nRetrieved CCR sections:\n{context}\n\n"
-        "Format the answer exactly as:\n"
-        "1. Optional follow-up question if needed.\n"
-        "2. 'Suggested compliance guidance:'\n"
-        "3. Two to four numbered advisory points written as suggestions to the user, each grounded in the retrieved CCR sections and including a citation.\n"
-        "4. Each numbered point should tell the user what to review, prepare, confirm, maintain, report, or avoid.\n"
-        "5. Keep the tone concise, practical, and professional.\n"
-        "6. The exact disclaimer.\n"
-        "Do not dump all retrieved sections. Do not include raw source URLs in the main answer. Do not add extra headings, confidence scores, or product commentary."
+        f"Question: {question}\n\n"
+        f"Retrieved CCR section briefs:\n{context}\n\n"
+        "Write the answer in this exact structure:\n"
+        "Compliance Advice:\n"
+        "According to the provided context data, <one short introductory sentence>.\n"
+        "Then 2 to 4 numbered items.\n"
+        "Each numbered item must use this shape:\n"
+        "<number>. <short topic label>: <citation> <two short sentences in plain English explaining why it matters and what the operator should do.>\n"
+        "After the numbered items, add one short concluding sentence.\n"
+        "Then add the exact disclaimer as the last line.\n\n"
+        "Rules:\n"
+        "- Keep the answer clean and easy to scan.\n"
+        "- Sound like a human advisor, not like a statute database.\n"
+        "- Do not include bullet points other than the numbered list.\n"
+        "- Do not include source URLs.\n"
+        "- Do not mention retrieval quality, confidence, internal systems, or missing embeddings.\n"
+        "- Do not copy long legal passages.\n"
+        "- Use the section heading to create the short topic label when possible."
     )
     if follow_up:
-        user_message += f"\nUse this exact follow-up question if needed: {follow_up}"
+        user_message += f"\nIf a follow-up is truly necessary, ask this exact question before the numbered list: {follow_up}"
     response = client.chat.completions.create(
         model=os.getenv("GROQ_CHAT_MODEL", "llama-3.1-8b-instant"),
         messages=[

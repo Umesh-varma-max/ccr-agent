@@ -210,12 +210,32 @@ textarea {
   font-size: 1.05rem;
 }
 
-.answer-card pre {
-  margin: 0;
-  white-space: pre-wrap;
-  line-height: 1.7;
+.answer-copy {
   color: #1f2937;
-  font-family: inherit;
+}
+
+.answer-copy p {
+  margin: 0 0 14px;
+  line-height: 1.75;
+}
+
+.answer-copy p:last-child {
+  margin-bottom: 0;
+}
+
+.answer-list {
+  margin: 0 0 18px 0;
+  padding-left: 28px;
+  color: #0f172a;
+}
+
+.answer-list li {
+  margin-bottom: 14px;
+  line-height: 1.75;
+}
+
+.answer-list li::marker {
+  font-weight: 700;
 }
 
 .sources-header {
