@@ -79,9 +79,6 @@ app.add_middleware(
 )
 
 
-@app.get("/", response_model=dict[str, str])
-def root() -> dict[str, str]:
-    return {"service": "CCR Compliance Agent API", "docs": "/docs", "health": "/health"}
 
 
 @app.get("/health", response_model=HealthResponse)
