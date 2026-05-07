@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 from functools import lru_cache
 from typing import Iterable
@@ -14,6 +15,11 @@ except ModuleNotFoundError:
 
 LOCAL_EMBEDDING_MODEL = os.getenv("LOCAL_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 HF_API_URL = f"https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/{LOCAL_EMBEDDING_MODEL}"
+
+
+def _normalize(vec: list[float]) -> list[float]:
+    norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+    return [v / norm for v in vec]
 
 
 class EmbeddingProvider:
@@ -35,9 +41,15 @@ class HuggingFaceAPIProvider(EmbeddingProvider):
             self._session.headers["Authorization"] = f"Bearer {token}"
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        resp = self._session.post(HF_API_URL, json={"inputs": texts, "options": {"wait_for_model": True}})
+        resp = self._session.post(
+            HF_API_URL,
+            json={"inputs": texts, "options": {"wait_for_model": True}},
+            timeout=30,
+        )
         resp.raise_for_status()
-        return resp.json()
+        embeddings = resp.json()
+        # Normalize to match sentence-transformers normalize_embeddings=True
+        return [_normalize(emb) for emb in embeddings]
 
 
 class SentenceTransformerProvider(EmbeddingProvider):
@@ -71,16 +83,16 @@ class HashEmbeddingProvider(EmbeddingProvider):
 
 @lru_cache(maxsize=2)
 def _get_cached_embedding_provider(model: str) -> EmbeddingProvider:
-    # 1. Try HuggingFace API (free, low RAM)
+    # 1. Try local sentence-transformers (best quality, needs RAM)
+    try:
+        return SentenceTransformerProvider(model)
+    except Exception:
+        pass
+    # 2. Try HuggingFace API (free, low RAM)
     try:
         provider = HuggingFaceAPIProvider()
         provider.embed_query("test")
         return provider
-    except Exception:
-        pass
-    # 2. Try local sentence-transformers
-    try:
-        return SentenceTransformerProvider(model)
     except Exception:
         pass
     # 3. Hash fallback
