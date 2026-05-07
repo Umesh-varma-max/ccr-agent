@@ -103,19 +103,7 @@ def _get_health() -> HealthResponse:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Pre-load the embedding model and retriever at startup
-    logger.info("Pre-loading embedding model and retriever...")
-    try:
-        _get_retriever()
-        logger.info("Retriever ready")
-    except Exception as exc:
-        logger.warning("Retriever pre-load failed (will retry on first request): %s", exc)
-    # Pre-cache health
-    try:
-        _get_health()
-        logger.info("Health cache primed")
-    except Exception:
-        pass
+    logger.info("CCR Compliance Agent API starting up")
     yield
 
 
