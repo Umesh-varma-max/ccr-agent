@@ -6,6 +6,8 @@ services:
     buildCommand: pip install -r requirements.txt && python -c "from fastembed import TextEmbedding; list(TextEmbedding(model_name='sentence-transformers/all-MiniLM-L6-v2').embed(['warmup']))"
     startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
       - key: EMBEDDING_PROVIDER
         value: fastembed
       - key: ALLOW_HASH_EMBEDDINGS
