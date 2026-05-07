@@ -101,6 +101,11 @@ def normalize_space(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def sentence_case_label(text: str | None) -> str:
+    cleaned = normalize_space(text or "") or "Key Requirement"
+    return cleaned[:1].upper() + cleaned[1:]
+
+
 def extract_query_terms(question: str) -> set[str]:
     terms = {
         token
@@ -180,20 +185,37 @@ def extract_key_points(document: str, limit: int = 3) -> list[str]:
     return points
 
 
+def concise_point(point: str, length: int = 150) -> str:
+    cleaned = normalize_space(point)
+    if not cleaned:
+        return ""
+    return cleaned[:length].rstrip(" ,;.") + ("..." if len(cleaned) > length else "")
+
+
 def build_advice_sentence(brief: dict[str, Any], hit: dict[str, Any]) -> str:
     heading = (brief.get("section_heading") or "").lower()
     points = extract_key_points(hit.get("document", ""))
+    short_points = [concise_point(point) for point in points if concise_point(point)]
     if "eligib" in heading and points:
-        return "Check whether your site meets the eligibility requirements, including: " + "; ".join(points[:3]) + "."
+        return "Review the eligibility requirements and confirm the site qualifies before moving forward."
     if "responsib" in heading and points:
-        return "Plan to comply with the operating obligations in this section, especially: " + "; ".join(points[:3]) + "."
+        return "Confirm the ongoing operating obligations and set up a process to keep them current."
     if "revocation" in heading and points:
         return "Treat this section as an enforcement risk check, because it warns that noncompliance can affect designation status."
     if "definition" in heading and points:
         return "Use this section to confirm whether your facility or activity falls within the regulatory definition being discussed."
-    if points:
-        return "Use this section as a practical checklist, focusing on: " + "; ".join(points[:3]) + "."
+    if short_points:
+        return "Use this section as a practical checklist and review the main operational requirements closely."
     return brief.get("why_it_applies") or "Review this section because it was one of the closest matches in the indexed CCR data."
+
+
+def build_operator_action(hit: dict[str, Any]) -> str:
+    points = extract_key_points(hit.get("document", ""), limit=2)
+    if points:
+        clean_points = [concise_point(point, length=120) for point in points if concise_point(point, length=120)]
+        if clean_points:
+            return "Key details include " + "; ".join(clean_points) + "."
+    return "Review the section text carefully and compare it against the facility's current practices."
 
 
 def dedupe_hits(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -233,6 +255,7 @@ def build_section_briefs(question: str, hits: list[dict[str, Any]]) -> list[dict
 
 def format_assignment_response(
     question: str,
+    hits: list[dict[str, Any]],
     section_briefs: list[dict[str, Any]],
     follow_up: str | None,
     has_strong_match: bool,
@@ -247,25 +270,41 @@ def format_assignment_response(
         lines.append(DISCLAIMER)
         return "\n\n".join(lines)
 
-    if not has_strong_match:
-        lines.append("I could not confirm a strong facility-specific match from the currently indexed CCR data, so treat this as preliminary guidance based on the closest sections available right now.")
+    if has_strong_match:
+        lines.append("According to the provided context data, the following CCR sections appear most relevant to this facility question.")
+    else:
+        lines.append("According to the provided context data, the sections below are the closest currently indexed CCR matches and should be treated as preliminary guidance.")
 
-    lines.append("Suggested compliance guidance:")
     for index, brief in enumerate(section_briefs[:3], start=1):
         citation = brief.get("citation") or "Unknown citation"
-        heading = brief.get("section_heading") or "Untitled section"
+        heading = sentence_case_label(brief.get("section_heading") or "Key Requirement")
         why = brief.get("why_it_applies") or "This was one of the closest matches in the indexed CCR data."
-        advice = brief.get("advice") or why
-        lines.append(
-            f"{index}. {advice} ({citation}; {heading})"
-        )
+        action = build_operator_action(hits[index - 1]) if index - 1 < len(hits) else ""
+        lines.append(f"{index}. {heading}: {citation} {why} {action}".strip())
 
     if len(section_briefs) > 3:
         extra = len(section_briefs) - 3
-        lines.append(f"I found {extra} additional supporting CCR sections, listed separately below the answer.")
+        lines.append(f"There {'is' if extra == 1 else 'are'} {extra} additional supporting CCR section{'s' if extra != 1 else ''} available in the context list below.")
+
+    lines.append("Use these sections as a starting point, then verify the exact facility type and operating details before relying on the final compliance checklist.")
 
     lines.append(DISCLAIMER)
     return "\n\n".join(lines)
+
+
+def clean_llm_answer(text: str, follow_up: str | None) -> str:
+    cleaned = text.strip()
+    cleaned = re.sub(r"^\s*Compliance Advice:\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"^\s*Suggested compliance guidance:\s*", "", cleaned, flags=re.I)
+    if follow_up:
+        cleaned = re.sub(
+            rf"^\s*Follow-up question:\s*{re.escape(follow_up)}\s*",
+            "",
+            cleaned,
+            flags=re.I,
+        )
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 
 def answer_with_llm(question: str, hits: list[dict[str, Any]], follow_up: str | None) -> str:
@@ -303,7 +342,7 @@ def answer_with_llm(question: str, hits: list[dict[str, Any]], follow_up: str | 
         ],
         temperature=0.1,
     )
-    text = (response.choices[0].message.content or "").strip()
+    text = clean_llm_answer((response.choices[0].message.content or "").strip(), follow_up)
     return text if DISCLAIMER in text else f"{text}\n\n{DISCLAIMER}"
 
 
@@ -311,6 +350,7 @@ def answer_extractively(question: str, hits: list[dict[str, Any]], follow_up: st
     if not hits:
         return format_assignment_response(
             question=question,
+            hits=[],
             section_briefs=[],
             follow_up=follow_up,
             has_strong_match=False,
@@ -321,6 +361,7 @@ def answer_extractively(question: str, hits: list[dict[str, Any]], follow_up: st
     strong_hits = [hit for hit in hits if hit_overlap_terms(question, hit)]
     return format_assignment_response(
         question=question,
+        hits=hits,
         section_briefs=section_briefs,
         follow_up=follow_up,
         has_strong_match=bool(strong_hits),

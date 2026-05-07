@@ -41,7 +41,15 @@ const EXAMPLES = [
 ];
 
 function renderAnswer(answer: string) {
-  const paragraphs = answer.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
+  const paragraphs = answer
+    .split(/\n\s*\n/)
+    .map((part) => part.trim())
+    .filter((part) => {
+      if (!part) return false;
+      if (/^Follow-up question:/i.test(part)) return false;
+      if (/^This is not legal advice\./i.test(part)) return false;
+      return true;
+    });
   const intro: string[] = [];
   const numbered: string[] = [];
   const outro: string[] = [];
@@ -49,6 +57,10 @@ function renderAnswer(answer: string) {
   for (const part of paragraphs) {
     if (/^\d+\.\s/.test(part)) {
       numbered.push(part.replace(/^\d+\.\s*/, ""));
+      continue;
+    }
+    if (/^Compliance Advice:/i.test(part)) {
+      intro.push(part.replace(/^Compliance Advice:\s*/i, ""));
       continue;
     }
     if (numbered.length === 0) {
