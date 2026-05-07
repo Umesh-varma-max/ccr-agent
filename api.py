@@ -1,21 +1,27 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import logging
 import os
-from pathlib import Path
 import time
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from agent.agent import answer, build_agent_response
 from agent.retriever import CCRRetriever, get_shared_retriever
 from crawler.config import QDRANT_COLLECTION
 from qdrant_utils import connect_qdrant, get_qdrant_uri
+
+logger = logging.getLogger("ccr-api")
+
+
+# ── Request / Response Models ────────────────────────────────────────
 
 
 class AskRequest(BaseModel):
@@ -59,36 +65,61 @@ class HealthResponse(BaseModel):
     indexed_records: int | None
 
 
-HEALTH_CACHE_TTL_SECONDS = int(os.getenv("HEALTH_CACHE_TTL_SECONDS", "300"))
+# ── Startup: pre-load embedding model + retriever ────────────────────
+
+HEALTH_CACHE_TTL = int(os.getenv("HEALTH_CACHE_TTL_SECONDS", "300"))
+
+_retriever: CCRRetriever | None = None
+_health_cache: HealthResponse | None = None
+_health_cache_at: float = 0.0
 
 
-def _current_health_snapshot() -> HealthResponse:
+def _get_retriever() -> CCRRetriever:
+    global _retriever
+    if _retriever is None:
+        _retriever = get_shared_retriever()
+    return _retriever
+
+
+def _get_health() -> HealthResponse:
+    global _health_cache, _health_cache_at
+    if _health_cache and (time.time() - _health_cache_at) < HEALTH_CACHE_TTL:
+        return _health_cache
     client = connect_qdrant()
     try:
         exists = client.has_collection(QDRANT_COLLECTION)
         stats: dict[str, Any] = client.get_collection_stats(QDRANT_COLLECTION) if exists else {}
-        return HealthResponse(
+        _health_cache = HealthResponse(
             status="ok" if exists else "no_collection",
             vector_db_uri=get_qdrant_uri(),
             collection=QDRANT_COLLECTION,
             indexed_records=stats.get("row_count") if exists else 0,
         )
+        _health_cache_at = time.time()
+        return _health_cache
     finally:
         client.close()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.retriever = None
-    app.state.retriever_error = None
-    app.state.health_snapshot = None
-    app.state.health_snapshot_at = 0.0
+    # Pre-load the embedding model and retriever at startup
+    logger.info("Pre-loading embedding model and retriever...")
     try:
-        app.state.retriever = get_shared_retriever()
+        _get_retriever()
+        logger.info("Retriever ready")
     except Exception as exc:
-        app.state.retriever_error = str(exc)
+        logger.warning("Retriever pre-load failed (will retry on first request): %s", exc)
+    # Pre-cache health
+    try:
+        _get_health()
+        logger.info("Health cache primed")
+    except Exception:
+        pass
     yield
 
+
+# ── FastAPI app ──────────────────────────────────────────────────────
 
 app = FastAPI(
     title="CCR Compliance Agent API",
@@ -99,26 +130,19 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-
+# ── API Routes ───────────────────────────────────────────────────────
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     try:
-        cached = getattr(app.state, "health_snapshot", None)
-        cached_at = getattr(app.state, "health_snapshot_at", 0.0)
-        if cached is not None and (time.time() - cached_at) < HEALTH_CACHE_TTL_SECONDS:
-            return cached
-        snapshot = _current_health_snapshot()
-        app.state.health_snapshot = snapshot
-        app.state.health_snapshot_at = time.time()
-        return snapshot
+        return _get_health()
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Qdrant health check failed: {exc}") from exc
 
@@ -134,15 +158,7 @@ def ask(request: AskRequest) -> AskResponse:
 @app.post("/ask-detailed", response_model=AskDetailedResponse)
 def ask_detailed(request: AskRequest) -> AskDetailedResponse:
     try:
-        retriever = app.state.retriever
-        if retriever is None:
-            try:
-                retriever = get_shared_retriever()
-                app.state.retriever = retriever
-                app.state.retriever_error = None
-            except Exception as exc:
-                app.state.retriever_error = str(exc)
-                raise HTTPException(status_code=503, detail=f"Retriever initialization failed: {exc}") from exc
+        retriever = _get_retriever()
         response = build_agent_response(request.question, top_k=request.top_k, retriever=retriever)
         return AskDetailedResponse(
             answer=response["answer"],
@@ -172,6 +188,8 @@ def ask_detailed(request: AskRequest) -> AskDetailedResponse:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+
+# ── Serve React frontend from frontend/dist ──────────────────────────
 
 FRONTEND_DIR = Path(__file__).resolve().parent / "frontend" / "dist"
 if FRONTEND_DIR.is_dir():
